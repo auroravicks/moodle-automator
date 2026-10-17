@@ -1,0 +1,32 @@
+lms:
+  base_url: https://moodle.example.edu
+
+storage:
+  internal_dir: class-notes
+  resources_dir: ../Resources
+  auth_state_path: null
+
+browser:
+  headless: false
+
+logging:
+  level: INFO
+  directory: logs
+  max_bytes: 2097152
+  backup_count: 5
+
+locale:
+  timezone: Asia/Kolkata
+
+deadlines:
+  reminder_hours: [72, 24, 3]
+  digest_windows_days:
+    urgent: 2
+    upcoming: 7
+  include_other_activity_types: false
+
+notifications:
+  google_chat:
+    enabled: false
+    deduplicate: false
+    excluded_courses: []

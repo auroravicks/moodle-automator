@@ -39,6 +39,10 @@ try {
         Copy-Item -LiteralPath '.env.example' -Destination '.env'
         Write-Host 'Created .env from .env.example.'
     }
+    if (-not (Test-Path -LiteralPath 'config.yml' -PathType Leaf)) {
+        Copy-Item -LiteralPath 'config.example.yml' -Destination 'config.yml'
+        Write-Host 'Created config.yml from config.example.yml.'
+    }
 
     Write-Host '[2/6] Checking configuration...'
     Invoke-Checked -Program $collector -Arguments @('doctor')
@@ -68,7 +72,10 @@ try {
         Invoke-Checked -Program $collector -Arguments @('sync')
     }
 
-    Write-Host '[6/6] Refreshing the clean Resources export...'
+    Write-Host '[6/7] Sending the deadline digest...'
+    Invoke-Checked -Program $collector -Arguments @('notify-deadlines')
+
+    Write-Host '[7/7] Refreshing the clean Resources export...'
     Invoke-Checked -Program $collector -Arguments @('export-resources')
     Write-Host 'Everything completed successfully.' -ForegroundColor Green
 }

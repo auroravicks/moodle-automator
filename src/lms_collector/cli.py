@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import logging
 from pathlib import Path
 
 import click
@@ -12,11 +13,17 @@ from .collectors import run_sync
 from .db import connect
 from .discovery import crawl_courses, observe_course_links, write_discovery_report
 from .exporter import export_readable
+from .notifications import send_deadline_digest
+from .logging_setup import configure_logging
+
+LOGGER = logging.getLogger(__name__)
 
 
 def settings() -> Settings:
     try:
-        return Settings.load()
+        config = Settings.load()
+        configure_logging(config)
+        return config
     except (OSError, ValueError) as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -125,7 +132,12 @@ def sync() -> None:
     config = settings()
     if not config.auth_state_path.exists():
         raise click.ClickException("No authentication state. Run: moodle-lms-automation login")
+    LOGGER.info("Starting full LMS synchronization")
     result = run_sync(config)
+    LOGGER.info(
+        "Synchronization complete: transcripts=%s notes=%s assignments=%s errors=%s",
+        result["transcripts"], result["notes"], result["assignments"], len(result["errors"]),
+    )
     click.echo(
         f"Collected {result['transcripts']} transcript records, {result['notes']} note records, "
         f"and {result['assignments']} assignments; errors={len(result['errors'])}."
@@ -138,7 +150,9 @@ def deadlines() -> None:
     config = settings()
     if not config.auth_state_path.exists():
         raise click.ClickException("No authentication state. Run: moodle-lms-automation login")
+    LOGGER.info("Starting assignment status refresh")
     result = run_sync(config, include_materials=False, include_assignments=True)
+    LOGGER.info("Assignment refresh complete: assignments=%s errors=%s", result["assignments"], len(result["errors"]))
     click.echo(f"Collected {result['assignments']} assignments; errors={len(result['errors'])}.")
 
 
@@ -151,6 +165,22 @@ def export_resources() -> None:
         f"{result['captions']} captions, "
         f"{result['notes']} notes, and {result['assignments']} assignments to {result['destination']}."
     )
+
+
+@cli.command(name="notify-deadlines")
+@click.option("--force", is_flag=True, help="Resend even when the current digest was delivered successfully.")
+def notify_deadlines(force: bool) -> None:
+    """Send a deduplicated Google Chat digest for actionable deadlines."""
+    try:
+        result = send_deadline_digest(settings(), force=force)
+    except (OSError, RuntimeError, ValueError) as exc:
+        LOGGER.exception("Deadline notification failed")
+        raise click.ClickException(str(exc)) from exc
+    if result["deduplicated"]:
+        click.echo(f"Deadline digest unchanged; already delivered ({result['items']} items).")
+    else:
+        suffix = f" Message: {result['message_name']}" if result.get("message_name") else ""
+        click.echo(f"Deadline digest delivered ({result['items']} items).{suffix}")
 
 
 if __name__ == "__main__":

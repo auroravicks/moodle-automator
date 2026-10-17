@@ -281,12 +281,23 @@ def collect_assignment(page: Page, course: Course, activity: Activity, settings:
             values[key] = _parse_moodle_date(match.group(1), settings)
     status = None
     table = page.locator(".submissionstatustable")
+    try:
+        table.wait_for(state="visible", timeout=10_000)
+    except Exception:
+        pass
     if table.count():
-        for row in table.locator("tr").all():
-            cells = row.locator("th,td")
-            if cells.count() >= 2 and _clean(cells.nth(0).inner_text()).upper() == "SUBMISSION STATUS":
-                status = _clean(cells.nth(1).inner_text())
+        for cell in table.locator(".baz-asg-cell").all():
+            label = cell.locator(".baz-asg-k")
+            if label.count() and _clean(label.inner_text()).casefold() == "submission status":
+                value = label.evaluate("e => e.nextElementSibling?.innerText || ''")
+                status = _clean(value) or None
                 break
+        if status is None:
+            for row in table.locator("tr").all():
+                cells = row.locator("th,td,.cell")
+                if cells.count() >= 2 and _clean(cells.nth(0).inner_text()).casefold() == "submission status":
+                    status = _clean(cells.nth(1).inner_text())
+                    break
     checked = utc_now()
     old = connection.execute("SELECT due_at, first_seen FROM assignments WHERE activity_id=?", (activity.activity_id,)).fetchone()
     first_seen = old["first_seen"] if old else checked

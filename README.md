@@ -1,6 +1,6 @@
 # moodle-lms-automation
 
-Local, Windows-first Moodle discovery tooling. Configuration is read only from a plain `.env` file; there is no `config.toml`.
+Local, Windows-first Moodle discovery tooling. Structured, non-secret behavior is configured only in ignored `config.yml`; credentials and webhook URLs are configured only in ignored `.env`. Copy the corresponding `.example` files when setting up a new machine. There is no override layer between them.
 
 ## Setup (PowerShell)
 
@@ -73,6 +73,10 @@ From the project root, run:
 ```
 
 The script creates the virtual environment and installs dependencies when needed, creates `.env` from the example when missing, validates the saved LMS session, opens the local login browser only when authentication is missing or expired, synchronizes the LMS, and refreshes the clean `Resources` export. Add `-Discover` to refresh the structural inventory, or `-DeadlinesOnly` for a lighter assignment refresh followed by export.
+
+Application information and errors are written to `class-notes/logs/moodle-lms-automation.log`. Rotation size and retained backups are configured under `logging` in `config.yml`. Secrets are never written to the log.
+
+Google Chat sends a fresh deadline digest on every pipeline run by default. Set `notifications.google_chat.deduplicate: true` in `config.yml` only if unchanged successful digests should be suppressed.
 
 The saved Playwright state, SQLite database, `.env`, and downloaded private course content are ignored by Git. Remove the tool's session with:
 
