@@ -76,7 +76,9 @@ The script creates the virtual environment and installs dependencies when needed
 
 Application information and errors are written to `class-notes/logs/moodle-lms-automation.log`. Rotation size and retained backups are configured under `logging` in `config.yml`. Secrets are never written to the log.
 
-Google Chat sends a fresh deadline digest on every pipeline run by default. Set `notifications.google_chat.deduplicate: true` in `config.yml` only if unchanged successful digests should be suppressed.
+Google Chat sends a fresh Moodle digest on every pipeline run by default. It includes actionable deadlines plus live lectures in the configured upcoming window, with direct Join links. Set `notifications.google_chat.deduplicate: true` in `config.yml` only if unchanged successful digests should be suppressed.
+
+The browser uses the dedicated persistent Chrome profile configured by `browser.profile_dir`. Scheduled runs are headless and never open or wait at a password popup. If the saved Moodle session is missing or expired, the pipeline logs the failure, sends a Google Chat login-required alert, exits nonzero, and does not start Knowledge. Restore access explicitly with `moodle-lms-automation login`, which always opens the isolated profile visibly, then rerun the base orchestrator. Do not open the same profile in another Chrome process while automation is running.
 
 The saved Playwright state, SQLite database, `.env`, and downloaded private course content are ignored by Git. Remove the tool's session with:
 

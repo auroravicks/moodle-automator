@@ -2,7 +2,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 from lms_collector.config import Settings
-from lms_collector.notifications import build_deadline_digest
+from lms_collector.notifications import build_deadline_digest, send_auth_required
 
 
 def test_digest_prioritizes_and_excludes(config: Settings) -> None:
@@ -27,3 +27,34 @@ def test_unknown_status_is_not_actionable(config: Settings) -> None:
     text, ids = build_deadline_digest([row], config, now)
     assert ids == []
     assert "https://example/1" not in text
+
+
+def test_digest_includes_upcoming_live_lectures(config: Settings) -> None:
+    now = datetime(2026, 10, 25, 12, 0, tzinfo=config.timezone)
+    live_rows = [
+        {"event_id": "10", "course": "Course A", "starts_at": (now + timedelta(days=1)).isoformat(), "url": "https://example/join/10"},
+        {"event_id": "11", "course": "Financial Analytics", "starts_at": (now + timedelta(days=1)).isoformat(), "url": "https://example/join/11"},
+        {"event_id": "12", "course": "Course A", "starts_at": (now + timedelta(days=8)).isoformat(), "url": "https://example/join/12"},
+    ]
+    settings = replace(config, webhook_excluded_courses=("Financial Analytics",), live_lecture_days=7)
+    text, ids = build_deadline_digest([], settings, now, live_rows)
+    assert ids == ["live:10"]
+    assert "https://example/join/10" in text
+    assert "https://example/join/11" not in text
+    assert "https://example/join/12" not in text
+
+
+def test_auth_required_alert_uses_configured_webhook(config: Settings, monkeypatch) -> None:
+    delivered: dict[str, str] = {}
+
+    def fake_send(url: str, text: str) -> str:
+        delivered["url"] = url
+        delivered["text"] = text
+        return "spaces/example/messages/1"
+
+    settings = replace(config, google_chat_webhook_url="https://chat.example/webhook")
+    monkeypatch.setattr("lms_collector.notifications._send_google_chat", fake_send)
+    result = send_auth_required(settings)
+    assert result["sent"] is True
+    assert delivered["url"] == "https://chat.example/webhook"
+    assert "Moodle login required" in delivered["text"]

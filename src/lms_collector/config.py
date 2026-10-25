@@ -17,6 +17,8 @@ class Settings:
     timezone: ZoneInfo
     reminder_hours: tuple[int, ...]
     headless: bool
+    browser_profile_dir: Path | None
+    browser_channel: str | None
     include_other_deadline_activities: bool
     auth_state_path: Path
     username: str | None
@@ -25,6 +27,7 @@ class Settings:
     webhook_excluded_courses: tuple[str, ...]
     google_chat_deduplicate: bool
     deadline_windows_days: tuple[int, int]
+    live_lecture_days: int
     log_level: str
     log_dir: Path
     log_max_bytes: int
@@ -67,6 +70,9 @@ class Settings:
             if auth_value
             else output_dir / "playwright-state" / "storage-state.json"
         )
+        profile_value = browser.get("profile_dir", "class-notes/chrome-profile")
+        profile_dir = Path(str(profile_value)).expanduser().resolve() if profile_value else None
+        browser_channel = str(browser.get("channel", "chrome")).strip() or None
         hours = tuple(sorted({int(value) for value in deadlines.get("reminder_hours", [72, 24, 3])}, reverse=True))
         if not hours or any(hour <= 0 for hour in hours):
             raise ValueError("REMINDER_HOURS must contain positive integers")
@@ -77,6 +83,8 @@ class Settings:
             timezone=ZoneInfo(str(locale.get("timezone", "Asia/Kolkata"))),
             reminder_hours=hours,
             headless=bool(browser.get("headless", False)),
+            browser_profile_dir=profile_dir,
+            browser_channel=browser_channel,
             include_other_deadline_activities=bool(deadlines.get("include_other_activity_types", False)),
             auth_state_path=auth_path,
             username=os.getenv("LMS_USERNAME") or None,
@@ -90,6 +98,7 @@ class Settings:
                 int(deadlines.get("digest_windows_days", {}).get("urgent", 2)),
                 int(deadlines.get("digest_windows_days", {}).get("upcoming", 7)),
             ),
+            live_lecture_days=int(google_chat.get("live_lecture_days", 7)),
             log_level=str(logging_config.get("level", "INFO")).upper(),
             log_dir=output_dir / str(logging_config.get("directory", "logs")),
             log_max_bytes=int(logging_config.get("max_bytes", 2_097_152)),

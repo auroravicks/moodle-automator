@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS recordings (
   first_seen TEXT NOT NULL,
   last_checked TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS live_lectures (
+  event_id TEXT PRIMARY KEY,
+  course TEXT NOT NULL,
+  starts_at TEXT NOT NULL,
+  url TEXT NOT NULL,
+  first_seen TEXT NOT NULL,
+  last_checked TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS alert_deliveries (
   dedupe_key TEXT PRIMARY KEY,
   channel TEXT NOT NULL,
@@ -63,4 +71,3 @@ def connect(path: Path) -> sqlite3.Connection:
     connection.row_factory = sqlite3.Row
     connection.executescript(SCHEMA)
     return connection
-

@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
 from playwright.sync_api import BrowserContext, Page, sync_playwright
 
-from .browser import new_context
+from .browser import new_context, save_auth
 from .config import Settings
 from .db import connect
 from .storage import atomic_json, atomic_write, safe_name, sha256, utc_now, write_jsonl
@@ -325,16 +325,69 @@ def collect_assignment(page: Page, course: Course, activity: Activity, settings:
     }
 
 
+def _calendar_date(label: str, now: datetime) -> datetime:
+    normalized = _clean(label).casefold()
+    if normalized == "today":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if normalized == "tomorrow":
+        return (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    value = datetime.strptime(_clean(label).title(), "%A, %d %b").replace(year=now.year, tzinfo=now.tzinfo)
+    if value.date() < now.date():
+        value = value.replace(year=now.year + 1)
+    return value
+
+
+def collect_live_lectures(page: Page, settings: Settings, connection: Any) -> list[dict[str, str]]:
+    page.goto(f"{settings.base_url}/calendar/view.php?view=upcoming", wait_until="domcontentloaded", timeout=45_000)
+    if "/login/" in page.url:
+        raise RuntimeError("Authentication expired while reading the calendar")
+    now = datetime.now(settings.timezone)
+    checked = utc_now()
+    lectures: list[dict[str, str]] = []
+    for group in page.locator(".cal-upgroup").all():
+        heading = group.locator(".cal-uphead")
+        if not heading.count():
+            continue
+        try:
+            day = _calendar_date(heading.first.inner_text(), now)
+        except ValueError:
+            continue
+        for row in group.locator(".cal-uprow.t-live").all():
+            time_text = _clean(row.locator(".cal-uptime").inner_text())
+            title = _clean(row.locator(".cal-upttl").inner_text())
+            url = row.get_attribute("href") or ""
+            try:
+                clock = datetime.strptime(time_text, "%H:%M")
+            except ValueError:
+                continue
+            starts_at = day.replace(hour=clock.hour, minute=clock.minute).isoformat()
+            event_id = _id(url)
+            previous = connection.execute(
+                "SELECT first_seen FROM live_lectures WHERE event_id=?", (event_id,)
+            ).fetchone()
+            first_seen = previous["first_seen"] if previous else checked
+            connection.execute(
+                "INSERT INTO live_lectures(event_id,course,starts_at,url,first_seen,last_checked) VALUES(?,?,?,?,?,?) "
+                "ON CONFLICT(event_id) DO UPDATE SET course=excluded.course,starts_at=excluded.starts_at,"
+                "url=excluded.url,last_checked=excluded.last_checked",
+                (event_id, title, starts_at, url, first_seen, checked),
+            )
+            lectures.append({"event_id": event_id, "course": title, "starts_at": starts_at, "url": url})
+    return lectures
+
+
 def run_sync(settings: Settings, *, include_materials: bool = True, include_assignments: bool = True) -> dict[str, Any]:
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     transcripts: list[dict[str, Any]] = []
     notes: list[dict[str, Any]] = []
     assignments: list[dict[str, Any]] = []
+    live_lectures: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
     with connect(settings.output_dir / "state.sqlite") as connection, sync_playwright() as playwright:
         browser, context = new_context(playwright, settings, visible=not settings.headless)
         page = context.new_page()
         courses, activities = inventory(page, settings)
+        live_lectures = collect_live_lectures(page, settings, connection)
         for course in courses:
             for activity in activities[course.course_id]:
                 try:
@@ -349,6 +402,7 @@ def run_sync(settings: Settings, *, include_materials: bool = True, include_assi
                 except Exception as exc:
                     errors.append({"course": course.name, "activity_id": activity.activity_id, "kind": activity.kind, "error": str(exc)[:500]})
                 connection.commit()
+        save_auth(context, settings.auth_state_path)
         browser.close()
     reports = settings.output_dir / "reports"
     write_jsonl(reports / "transcripts.jsonl", transcripts)
@@ -360,6 +414,7 @@ def run_sync(settings: Settings, *, include_materials: bool = True, include_assi
         "transcripts": len(transcripts),
         "notes": len(notes),
         "assignments": len(assignments),
+        "live_lectures": len(live_lectures),
         "errors": errors,
     }
     atomic_json(reports / "last-run.json", summary)

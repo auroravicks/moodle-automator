@@ -7,7 +7,9 @@ storage:
   auth_state_path: null
 
 browser:
-  headless: false
+  headless: true
+  channel: chrome
+  profile_dir: class-notes/chrome-profile
 
 logging:
   level: INFO
@@ -29,4 +31,5 @@ notifications:
   google_chat:
     enabled: false
     deduplicate: false
+    live_lecture_days: 7
     excluded_courses: []

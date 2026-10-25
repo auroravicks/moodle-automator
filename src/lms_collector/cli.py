@@ -13,7 +13,7 @@ from .collectors import run_sync
 from .db import connect
 from .discovery import crawl_courses, observe_course_links, write_discovery_report
 from .exporter import export_readable
-from .notifications import send_deadline_digest
+from .notifications import send_auth_required, send_deadline_digest
 from .logging_setup import configure_logging
 
 LOGGER = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ def doctor() -> None:
 @cli.command(name="clear-auth")
 @click.option("--yes", is_flag=True, help="Skip confirmation.")
 def clear_auth(yes: bool) -> None:
-    """Delete only this tool's saved Playwright authentication state."""
+    """Delete the storage-state mirror; retain the dedicated Chrome profile."""
     config = settings()
     target = config.auth_state_path
     if not target.exists():
@@ -106,7 +106,7 @@ def clear_auth(yes: bool) -> None:
         shutil.rmtree(target)
     else:
         target.unlink()
-    click.echo("Saved authentication state removed.")
+    click.echo("Storage-state mirror removed. The dedicated Chrome profile was retained for safety.")
 
 
 @cli.command(name="auth-check")
@@ -114,16 +114,32 @@ def auth_check() -> None:
     """Verify that the saved LMS session still reaches the dashboard."""
     config = settings()
     if not config.auth_state_path.exists():
+        LOGGER.warning("Saved Moodle authentication state is missing")
         raise click.ClickException("No saved authentication state.")
     with sync_playwright() as playwright:
         browser, context = new_context(playwright, config, visible=False)
         page = context.new_page()
         page.goto(f"{config.base_url}/my/", wait_until="domcontentloaded", timeout=45_000)
         authenticated = "/login/" not in page.url and not page.locator('input[name="username"]').is_visible()
+        if authenticated:
+            save_auth(context, config.auth_state_path)
         browser.close()
     if not authenticated:
+        LOGGER.warning("Saved Moodle authentication has expired")
         raise click.ClickException("Saved authentication has expired.")
     click.echo("Authentication session is valid.")
+
+
+@cli.command(name="notify-auth-required")
+def notify_auth_required() -> None:
+    """Send a Google Chat alert that manual Moodle login is required."""
+    try:
+        result = send_auth_required(settings())
+    except (OSError, RuntimeError, ValueError) as exc:
+        LOGGER.exception("Login-required notification failed")
+        raise click.ClickException(str(exc)) from exc
+    suffix = f" Message: {result['message_name']}" if result.get("message_name") else ""
+    click.echo(f"Login-required alert delivered.{suffix}")
 
 
 @cli.command()
@@ -135,12 +151,13 @@ def sync() -> None:
     LOGGER.info("Starting full LMS synchronization")
     result = run_sync(config)
     LOGGER.info(
-        "Synchronization complete: transcripts=%s notes=%s assignments=%s errors=%s",
-        result["transcripts"], result["notes"], result["assignments"], len(result["errors"]),
+        "Synchronization complete: transcripts=%s notes=%s assignments=%s live_lectures=%s errors=%s",
+        result["transcripts"], result["notes"], result["assignments"], result["live_lectures"], len(result["errors"]),
     )
     click.echo(
         f"Collected {result['transcripts']} transcript records, {result['notes']} note records, "
-        f"and {result['assignments']} assignments; errors={len(result['errors'])}."
+        f"{result['assignments']} assignments, and {result['live_lectures']} upcoming live lectures; "
+        f"errors={len(result['errors'])}."
     )
 
 
@@ -177,10 +194,10 @@ def notify_deadlines(force: bool) -> None:
         LOGGER.exception("Deadline notification failed")
         raise click.ClickException(str(exc)) from exc
     if result["deduplicated"]:
-        click.echo(f"Deadline digest unchanged; already delivered ({result['items']} items).")
+        click.echo(f"Moodle digest unchanged; already delivered ({result['items']} items).")
     else:
         suffix = f" Message: {result['message_name']}" if result.get("message_name") else ""
-        click.echo(f"Deadline digest delivered ({result['items']} items).{suffix}")
+        click.echo(f"Moodle digest delivered ({result['items']} items).{suffix}")
 
 
 if __name__ == "__main__":

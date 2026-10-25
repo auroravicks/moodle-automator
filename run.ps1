@@ -50,9 +50,9 @@ try {
     Write-Host '[3/6] Checking LMS authentication...'
     & $collector auth-check
     if ($LASTEXITCODE -ne 0) {
-        Write-Host 'Authentication is missing or expired. Opening the local login browser...'
-        Invoke-Checked -Program $collector -Arguments @('login')
-        Invoke-Checked -Program $collector -Arguments @('auth-check')
+        Write-Warning 'Authentication is missing or expired. This unattended run will stop without opening a browser.'
+        Invoke-Checked -Program $collector -Arguments @('notify-auth-required')
+        throw 'Manual Moodle login required. Run: .\.venv\Scripts\moodle-lms-automation.exe login'
     }
 
     if ($Discover) {
@@ -72,7 +72,7 @@ try {
         Invoke-Checked -Program $collector -Arguments @('sync')
     }
 
-    Write-Host '[6/7] Sending the deadline digest...'
+    Write-Host '[6/7] Sending the Moodle deadline and live-lecture digest...'
     Invoke-Checked -Program $collector -Arguments @('notify-deadlines')
 
     Write-Host '[7/7] Refreshing the clean Resources export...'
