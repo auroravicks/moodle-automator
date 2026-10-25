@@ -8,8 +8,10 @@ storage:
 
 browser:
   headless: true
-  channel: chrome
-  profile_dir: class-notes/chrome-profile
+  # null uses Playwright's bundled Chromium on every supported platform.
+  # Set to chrome, msedge, or another installed Playwright channel if desired.
+  channel: null
+  profile_dir: class-notes/browser-profile
 
 logging:
   level: INFO
@@ -18,7 +20,7 @@ logging:
   backup_count: 5
 
 locale:
-  timezone: Asia/Kolkata
+  timezone: UTC
 
 deadlines:
   reminder_hours: [72, 24, 3]

@@ -34,11 +34,14 @@ def _send_google_chat(webhook_url: str, text: str) -> str | None:
 
 
 def send_auth_required(settings: Settings) -> dict[str, Any]:
+    if not settings.google_chat_enabled:
+        LOGGER.warning("Moodle authentication is missing or expired; Google Chat notifications are disabled")
+        return {"sent": False, "disabled": True, "message_name": None}
     if not settings.google_chat_webhook_url:
         raise ValueError("GOOGLE_CHAT_WEBHOOK_URL is not configured in .env")
     text = (
         "🔐 *Moodle login required*\n\n"
-        "The scheduled LMS run stopped before collecting or indexing anything because the saved session is "
+        "The unattended LMS run stopped before collecting or indexing anything because the saved session is "
         "missing or expired.\n\n"
         "Open the Automation project and run `moodle-lms-automation login`, then rerun the base orchestrator."
     )
@@ -133,6 +136,9 @@ def build_deadline_digest(
 
 
 def send_deadline_digest(settings: Settings, *, force: bool = False) -> dict[str, Any]:
+    if not settings.google_chat_enabled:
+        LOGGER.info("Google Chat notifications are disabled")
+        return {"sent": False, "disabled": True, "deduplicated": False, "items": 0}
     if not settings.google_chat_webhook_url:
         raise ValueError("GOOGLE_CHAT_WEBHOOK_URL is not configured in .env")
     with connect(settings.output_dir / "state.sqlite") as connection:

@@ -138,8 +138,11 @@ def notify_auth_required() -> None:
     except (OSError, RuntimeError, ValueError) as exc:
         LOGGER.exception("Login-required notification failed")
         raise click.ClickException(str(exc)) from exc
-    suffix = f" Message: {result['message_name']}" if result.get("message_name") else ""
-    click.echo(f"Login-required alert delivered.{suffix}")
+    if result.get("disabled"):
+        click.echo("Login-required alert not sent because Google Chat notifications are disabled.")
+    else:
+        suffix = f" Message: {result['message_name']}" if result.get("message_name") else ""
+        click.echo(f"Login-required alert delivered.{suffix}")
 
 
 @cli.command()
@@ -193,7 +196,9 @@ def notify_deadlines(force: bool) -> None:
     except (OSError, RuntimeError, ValueError) as exc:
         LOGGER.exception("Deadline notification failed")
         raise click.ClickException(str(exc)) from exc
-    if result["deduplicated"]:
+    if result.get("disabled"):
+        click.echo("Moodle digest not sent because Google Chat notifications are disabled.")
+    elif result["deduplicated"]:
         click.echo(f"Moodle digest unchanged; already delivered ({result['items']} items).")
     else:
         suffix = f" Message: {result['message_name']}" if result.get("message_name") else ""

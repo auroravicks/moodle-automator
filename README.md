@@ -1,35 +1,94 @@
 # moodle-lms-automation
 
-Local, Windows-first Moodle discovery tooling. Structured, non-secret behavior is configured only in ignored `config.yml`; credentials and webhook URLs are configured only in ignored `.env`. Copy the corresponding `.example` files when setting up a new machine. There is no override layer between them.
+A cross-platform Moodle collector for lecture transcripts, captions, notes, assignments, live-lecture reminders, and clean local exports. It runs on Windows, Linux, and macOS with Python 3.11 or newer.
 
-## Setup (PowerShell)
+Behavior is configured in the ignored `config.yml`. Credentials and webhook URLs belong only in the ignored `.env`. Neither file overrides the other.
+
+## Requirements
+
+- Python 3.11+
+- A Chromium-compatible environment supported by Playwright
+- Network access to the target Moodle site
+- Google Chat webhook access only when notifications are enabled
+
+Linux hosts may need Playwright's system packages during initial setup:
+
+```bash
+python3 -m playwright install --with-deps chromium
+```
+
+## Quick start
+
+### Linux and macOS (`sh`, `bash`, or `zsh`)
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+python -m playwright install chromium
+cp .env.example .env
+cp config.example.yml config.yml
+
+moodle-lms-automation doctor
+moodle-lms-automation login
+sh run.sh
+```
+
+The runner is POSIX-shell compatible: use `sh run.sh`, `bash run.sh`, or `zsh run.sh`.
+
+### Windows PowerShell
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
-playwright install chromium
+python -m playwright install chromium
 Copy-Item .env.example .env
-```
+Copy-Item config.example.yml config.yml
 
-Edit `.env` locally. It is ignored by Git. Leaving `LMS_USERNAME` and `LMS_PASSWORD` blank is recommended: `login` will let you enter credentials directly in the isolated browser, so the collector never reads them.
-
-```powershell
 moodle-lms-automation doctor
 moodle-lms-automation login
-moodle-lms-automation discover
-moodle-lms-automation sync
+.\run.ps1
 ```
 
-`discover` writes the locally observed DOM inventory to `class-notes/reports/discovery.json`. `sync` collects transcripts, notes, and assignments. `deadlines` refreshes assignments only.
+Both runners expose the same modes; only the host shell's argument spelling differs:
+
+| Mode | POSIX shell | PowerShell |
+| --- | --- | --- |
+| Normal synchronization | `sh run.sh` | `.\run.ps1` |
+| Refresh structure discovery first | `sh run.sh --discover` | `.\run.ps1 -Discover` |
+| Refresh deadlines and live lectures only | `sh run.sh --deadlines-only` | `.\run.ps1 -DeadlinesOnly` |
+
+## Authentication and unattended runs
+
+`login` always opens a visible, isolated persistent browser profile. Unattended workflows are headless and never wait at a password prompt. If the Moodle session is missing or expired, the runner logs the failure, optionally sends a Google Chat login-required alert, exits nonzero, and leaves downstream jobs untouched.
+
+The example configuration uses Playwright's bundled Chromium (`browser.channel: null`) for portability. Set a branded channel such as `chrome` or `msedge` only when it is installed on the host. Do not open the configured profile in another browser process while collection is running.
+
+The saved Playwright state, persistent browser profile, SQLite database, `.env`, `config.yml`, logs, and downloaded private content are ignored by Git.
+
+## Commands
+
+```text
+moodle-lms-automation doctor
+moodle-lms-automation login
+moodle-lms-automation auth-check
+moodle-lms-automation discover
+moodle-lms-automation sync
+moodle-lms-automation deadlines
+moodle-lms-automation notify-deadlines
+moodle-lms-automation export-resources
+moodle-lms-automation clear-auth
+```
+
+`discover` records observed Moodle structure. `sync` collects materials, assignments, and upcoming live lectures. `deadlines` performs the lighter assignment/calendar refresh. `export-resources` produces a human-readable, metadata-free view at `storage.resources_dir`.
 
 ## Output layout
-
-Each subject keeps transcripts and notes beside each other:
 
 ```text
 class-notes/
   state.sqlite
+  browser-profile/
   courses/
     <subject>--<course-id>/
       course.json
@@ -48,42 +107,34 @@ class-notes/
     notes.jsonl
     deadlines.json
     last-run.json
+  logs/
 ```
 
-`transcripts.jsonl` is the batch-processing manifest intended for future summarization. Every record contains a schema version, subject/course identity, stable LMS activity ID, source URL, caption status/language, content hash, and paths to the original VTT and normalized timestamped text. A summarizer can group records by `subject` and write its results elsewhere without changing source material.
+`transcripts.jsonl` is suitable for later batch summarization. Notes are content-addressed, so changed files create new versions rather than overwriting earlier material.
 
-Notes are content-addressed under `versions/`, so changed files create a new version rather than overwriting an earlier one.
+## Notifications
 
-## Clean resources export
+Google Chat notifications are optional. Enable them under `notifications.google_chat` in `config.yml`, then set `GOOGLE_CHAT_WEBHOOK_URL` in `.env`. The digest includes actionable deadlines and live lectures within the configured window. Course exclusions and deduplication remain non-secret YAML settings.
 
-`RESOURCES_DIR` in `.env` selects a separate, code-independent export. Generate it with:
+When notifications are disabled, collection and export continue normally without requiring a webhook.
 
-```powershell
-moodle-lms-automation export-resources
+## Orchestration
+
+The runners are ordinary finite processes; no resident shell is required. To chain a separate indexer, keep orchestration outside both repositories:
+
+```bash
+#!/usr/bin/env sh
+set -eu
+/bin/sh /absolute/path/to/moodle-lms-automation/run.sh
+/bin/sh /absolute/path/to/grep-knowledge/run.sh
 ```
 
-Each course contains only `Transcripts/*.txt`, `Captions/*.vtt`, original files under `Notes/`, and a readable `Assignments.md`. Internal metadata, hashes, SQLite state, and version-directory layers remain under `class-notes` and are not copied into this view.
+The second command runs only after the collector succeeds.
 
-## One-command workflow
+## Operational notes
 
-From the project root, run:
-
-```powershell
-.\run.ps1
-```
-
-The script creates the virtual environment and installs dependencies when needed, creates `.env` from the example when missing, validates the saved LMS session, opens the local login browser only when authentication is missing or expired, synchronizes the LMS, and refreshes the clean `Resources` export. Add `-Discover` to refresh the structural inventory, or `-DeadlinesOnly` for a lighter assignment refresh followed by export.
-
-Application information and errors are written to `class-notes/logs/moodle-lms-automation.log`. Rotation size and retained backups are configured under `logging` in `config.yml`. Secrets are never written to the log.
-
-Google Chat sends a fresh Moodle digest on every pipeline run by default. It includes actionable deadlines plus live lectures in the configured upcoming window, with direct Join links. Set `notifications.google_chat.deduplicate: true` in `config.yml` only if unchanged successful digests should be suppressed.
-
-The browser uses the dedicated persistent Chrome profile configured by `browser.profile_dir`. Scheduled runs are headless and never open or wait at a password popup. If the saved Moodle session is missing or expired, the pipeline logs the failure, sends a Google Chat login-required alert, exits nonzero, and does not start Knowledge. Restore access explicitly with `moodle-lms-automation login`, which always opens the isolated profile visibly, then rerun the base orchestrator. Do not open the same profile in another Chrome process while automation is running.
-
-The saved Playwright state, SQLite database, `.env`, and downloaded private course content are ignored by Git. Remove the tool's session with:
-
-```powershell
-moodle-lms-automation clear-auth
-```
-
-Normal visits may cause Moodle to mark activities as viewed or complete. Monitoring only runs while the Windows machine is on and has network access. External notifications are intentionally not enabled until a provider is selected and an explicit live-message test is requested.
+- Application logs rotate under the configured internal directory.
+- Secrets are never intentionally written to logs.
+- LMS visits may mark activities as viewed or complete.
+- Selectors target the Moodle variant this project was developed against; use `discover` when adapting it to another deployment.
+- `clear-auth` removes the portable storage-state mirror. Delete a persistent browser profile manually only after verifying its configured path and accepting that saved browser data will be lost.

@@ -52,7 +52,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         Write-Warning 'Authentication is missing or expired. This unattended run will stop without opening a browser.'
         Invoke-Checked -Program $collector -Arguments @('notify-auth-required')
-        throw 'Manual Moodle login required. Run: .\.venv\Scripts\moodle-lms-automation.exe login'
+        throw 'Manual Moodle login required. Run the moodle-lms-automation login command for this environment.'
     }
 
     if ($Discover) {

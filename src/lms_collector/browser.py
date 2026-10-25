@@ -21,7 +21,7 @@ def new_context(
             accept_downloads=True,
         )
         # MoodleSession is a session cookie, so Chrome discards it at shutdown.
-        # Rehydrate the latest private cookie mirror on every scheduled launch.
+        # Rehydrate the latest private cookie mirror on every unattended launch.
         if settings.auth_state_path.exists():
             state = json.loads(settings.auth_state_path.read_text(encoding="utf-8"))
             cookies = state.get("cookies", [])

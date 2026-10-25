@@ -24,6 +24,7 @@ class Settings:
     username: str | None
     password: str | None
     google_chat_webhook_url: str | None = field(repr=False)
+    google_chat_enabled: bool
     webhook_excluded_courses: tuple[str, ...]
     google_chat_deduplicate: bool
     deadline_windows_days: tuple[int, int]
@@ -70,9 +71,10 @@ class Settings:
             if auth_value
             else output_dir / "playwright-state" / "storage-state.json"
         )
-        profile_value = browser.get("profile_dir", "class-notes/chrome-profile")
+        profile_value = browser.get("profile_dir", str(output_dir / "browser-profile"))
         profile_dir = Path(str(profile_value)).expanduser().resolve() if profile_value else None
-        browser_channel = str(browser.get("channel", "chrome")).strip() or None
+        channel_value = browser.get("channel")
+        browser_channel = str(channel_value).strip() if channel_value else None
         hours = tuple(sorted({int(value) for value in deadlines.get("reminder_hours", [72, 24, 3])}, reverse=True))
         if not hours or any(hour <= 0 for hour in hours):
             raise ValueError("REMINDER_HOURS must contain positive integers")
@@ -80,7 +82,7 @@ class Settings:
             base_url=base_url.rstrip("/"),
             output_dir=output_dir,
             resources_dir=resources_dir,
-            timezone=ZoneInfo(str(locale.get("timezone", "Asia/Kolkata"))),
+            timezone=ZoneInfo(str(locale.get("timezone", "UTC"))),
             reminder_hours=hours,
             headless=bool(browser.get("headless", False)),
             browser_profile_dir=profile_dir,
@@ -90,6 +92,7 @@ class Settings:
             username=os.getenv("LMS_USERNAME") or None,
             password=os.getenv("LMS_PASSWORD") or None,
             google_chat_webhook_url=os.getenv("GOOGLE_CHAT_WEBHOOK_URL") or None,
+            google_chat_enabled=bool(google_chat.get("enabled", False)),
             webhook_excluded_courses=tuple(
                 str(value).strip() for value in google_chat.get("excluded_courses", []) if str(value).strip()
             ),

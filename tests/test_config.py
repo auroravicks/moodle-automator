@@ -22,3 +22,4 @@ def test_loads_yaml_behavior_and_env_secrets(tmp_path: Path, monkeypatch) -> Non
     assert config.headless is True
     assert config.username == "student"
     assert config.google_chat_webhook_url == "https://secret.example"
+    assert config.google_chat_enabled is False
