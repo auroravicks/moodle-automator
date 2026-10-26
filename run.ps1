@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [switch]$Discover,
-    [switch]$DeadlinesOnly
+    [switch]$DeadlinesOnly,
+    [switch]$LoginIfNeeded
 )
 
 Set-StrictMode -Version Latest
@@ -23,7 +24,7 @@ function Invoke-Checked {
 
 Push-Location $projectRoot
 try {
-    Write-Host '[1/6] Preparing the local environment...'
+    Write-Host '[1/7] Preparing the local environment...'
     if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
         py -3.12 -m venv .venv
         if ($LASTEXITCODE -ne 0) {
@@ -44,15 +45,23 @@ try {
         Write-Host 'Created config.yml from config.example.yml.'
     }
 
-    Write-Host '[2/6] Checking configuration...'
+    Write-Host '[2/7] Checking configuration...'
     Invoke-Checked -Program $collector -Arguments @('doctor')
 
-    Write-Host '[3/6] Checking LMS authentication...'
+    Write-Host '[3/7] Checking LMS authentication...'
     & $collector auth-check
     if ($LASTEXITCODE -ne 0) {
-        Write-Warning 'Authentication is missing or expired. This unattended run will stop without opening a browser.'
-        Invoke-Checked -Program $collector -Arguments @('notify-auth-required')
-        throw 'Manual Moodle login required. Run the moodle-lms-automation login command for this environment.'
+        if ($LoginIfNeeded) {
+            Write-Warning 'Authentication is missing or expired. Opening the interactive login window.'
+            Invoke-Checked -Program $collector -Arguments @('login')
+            Write-Host 'Rechecking LMS authentication...'
+            Invoke-Checked -Program $collector -Arguments @('auth-check')
+        }
+        else {
+            Write-Warning 'Authentication is missing or expired. This unattended run will stop without opening a browser.'
+            Invoke-Checked -Program $collector -Arguments @('notify-auth-required')
+            throw 'Manual Moodle login required. Rerun with -LoginIfNeeded or run the moodle-lms-automation login command.'
+        }
     }
 
     if ($Discover) {

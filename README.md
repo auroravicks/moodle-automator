@@ -58,10 +58,11 @@ Both runners expose the same modes; only the host shell's argument spelling diff
 | Normal synchronization | `sh run.sh` | `.\run.ps1` |
 | Refresh structure discovery first | `sh run.sh --discover` | `.\run.ps1 -Discover` |
 | Refresh deadlines and live lectures only | `sh run.sh --deadlines-only` | `.\run.ps1 -DeadlinesOnly` |
+| Open interactive login when needed | `sh run.sh --login-if-needed` | `.\run.ps1 -LoginIfNeeded` |
 
 ## Authentication and unattended runs
 
-`login` always opens a visible, isolated persistent browser profile. Unattended workflows are headless and never wait at a password prompt. If the Moodle session is missing or expired, the runner logs the failure, optionally sends a Google Chat login-required alert, exits nonzero, and leaves downstream jobs untouched.
+`login` always opens a visible, isolated persistent browser profile. Unattended workflows are headless and never wait at a password prompt. If the Moodle session is missing or expired, the default runner logs the failure, optionally sends a Google Chat login-required alert, exits nonzero, and leaves downstream jobs untouched. For a manual run, opt into an interactive recovery with `--login-if-needed` or `-LoginIfNeeded`; after login, the runner verifies the new session before continuing.
 
 The example configuration uses Playwright's bundled Chromium (`browser.channel: null`) for portability. Set a branded channel such as `chrome` or `msedge` only when it is installed on the host. Do not open the configured profile in another browser process while collection is running.
 

@@ -3,10 +3,12 @@ set -eu
 
 discover=false
 deadlines_only=false
+login_if_needed=false
 for argument in "$@"; do
     case "$argument" in
         --discover) discover=true ;;
         --deadlines-only) deadlines_only=true ;;
+        --login-if-needed) login_if_needed=true ;;
         *) echo "Unknown argument: $argument" >&2; exit 2 ;;
     esac
 done
@@ -41,9 +43,17 @@ echo '[2/7] Checking configuration...'
 
 echo '[3/7] Checking LMS authentication...'
 if ! "$collector" auth-check; then
-    echo 'Authentication is missing or expired; stopping without opening a browser.' >&2
-    "$collector" notify-auth-required
-    exit 1
+    if [ "$login_if_needed" = true ]; then
+        echo 'Authentication is missing or expired; opening the interactive login window.' >&2
+        "$collector" login
+        echo 'Rechecking LMS authentication...'
+        "$collector" auth-check
+    else
+        echo 'Authentication is missing or expired; stopping without opening a browser.' >&2
+        "$collector" notify-auth-required
+        echo 'Rerun with --login-if-needed or run moodle-lms-automation login.' >&2
+        exit 1
+    fi
 fi
 
 if [ "$discover" = true ]; then
