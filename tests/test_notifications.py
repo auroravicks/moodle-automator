@@ -2,7 +2,15 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 
 from lms_collector.config import Settings
-from lms_collector.notifications import build_deadline_digest, send_auth_required
+from lms_collector.notifications import _submitted, build_deadline_digest, send_auth_required
+
+
+def test_submission_status_does_not_treat_negative_status_as_complete() -> None:
+    assert _submitted("Submitted for grading") is True
+    assert _submitted("Graded") is True
+    assert _submitted("Not submitted") is False
+    assert _submitted("No submissions have been made yet") is False
+    assert _submitted("Not yet attempted") is False
 
 
 def test_digest_prioritizes_and_excludes(config: Settings) -> None:
@@ -17,8 +25,23 @@ def test_digest_prioritizes_and_excludes(config: Settings) -> None:
     settings = replace(config, webhook_excluded_courses=("Excluded Course",))
     text, ids = build_deadline_digest(rows, settings, now)
     assert ids == ["1", "2", "3"]
-    assert text.index("Missed") < text.index("Due within 2 days") < text.index("Due within 7 days")
+    assert text.index("Due within 2 days") < text.index("Due within 7 days") < text.index("Missed within the last 7 days")
     assert "https://example/4" not in text
+
+
+def test_digest_puts_older_missed_items_at_the_bottom(config: Settings) -> None:
+    now = datetime(2026, 10, 17, 12, 0, tzinfo=config.timezone)
+    rows = [
+        {"activity_id": "recent", "course": "Course A", "title": "Recent miss", "url": "https://example/recent", "due_at": (now - timedelta(days=7)).isoformat(), "submission_status": "Not submitted"},
+        {"activity_id": "old", "course": "Course A", "title": "Old miss", "url": "https://example/old", "due_at": (now - timedelta(days=8)).isoformat(), "submission_status": "Not submitted"},
+    ]
+
+    text, ids = build_deadline_digest(rows, config, now)
+
+    assert ids == ["old", "recent"]
+    assert text.index("Missed within the last 7 days") > text.index("Live lectures")
+    assert text.index("Recent miss") < text.index("Missed more than 7 days ago")
+    assert text.rstrip().endswith("https://example/old")
 
 
 def test_unknown_status_is_not_actionable(config: Settings) -> None:

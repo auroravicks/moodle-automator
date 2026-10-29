@@ -28,6 +28,7 @@ class Settings:
     webhook_excluded_courses: tuple[str, ...]
     google_chat_deduplicate: bool
     deadline_windows_days: tuple[int, int]
+    recent_missed_days: int
     live_lecture_days: int
     log_level: str
     log_dir: Path
@@ -101,6 +102,7 @@ class Settings:
                 int(deadlines.get("digest_windows_days", {}).get("urgent", 2)),
                 int(deadlines.get("digest_windows_days", {}).get("upcoming", 7)),
             ),
+            recent_missed_days=int(deadlines.get("recent_missed_days", 7)),
             live_lecture_days=int(google_chat.get("live_lecture_days", 7)),
             log_level=str(logging_config.get("level", "INFO")).upper(),
             log_dir=output_dir / str(logging_config.get("directory", "logs")),

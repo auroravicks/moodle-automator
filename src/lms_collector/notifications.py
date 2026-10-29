@@ -56,7 +56,12 @@ def _value(row: Any, name: str) -> Any:
 
 
 def _submitted(status: str | None) -> bool:
-    return bool(status and ("submitted" in status.casefold() or "graded" in status.casefold()))
+    if not status:
+        return False
+    normalized = " ".join(status.casefold().split())
+    if any(value in normalized for value in ("not submitted", "no submission", "not yet attempted", "in progress")):
+        return False
+    return "submitted" in normalized or "graded" in normalized or normalized == "finished"
 
 
 def _excluded(course: str, exclusions: tuple[str, ...]) -> bool:
@@ -71,7 +76,10 @@ def build_deadline_digest(
     urgent_days, upcoming_days = settings.deadline_windows_days
     two_days = now + timedelta(days=urgent_days)
     seven_days = now + timedelta(days=upcoming_days)
-    groups: dict[str, list[tuple[datetime, Any]]] = {"missed": [], "two_days": [], "seven_days": []}
+    recent_missed_cutoff = now - timedelta(days=settings.recent_missed_days)
+    groups: dict[str, list[tuple[datetime, Any]]] = {
+        "recent_missed": [], "two_days": [], "seven_days": [], "older_missed": []
+    }
     included_ids: list[str] = []
     for row in rows:
         due_value = _value(row, "due_at")
@@ -82,7 +90,7 @@ def build_deadline_digest(
             continue
         due = datetime.fromisoformat(due_value).astimezone(settings.timezone)
         if due < now:
-            group = "missed"
+            group = "recent_missed" if due >= recent_missed_cutoff else "older_missed"
         elif due <= two_days:
             group = "two_days"
         elif due <= seven_days:
@@ -93,12 +101,13 @@ def build_deadline_digest(
         included_ids.append(str(_value(row, "activity_id")))
 
     headings = {
-        "missed": "🚨 *Missed*",
+        "recent_missed": f"🚨 *Missed within the last {settings.recent_missed_days} days*",
         "two_days": f"🔴 *Due within {urgent_days} days*",
         "seven_days": f"🟡 *Due within {upcoming_days} days*",
+        "older_missed": f"⚫ *Missed more than {settings.recent_missed_days} days ago*",
     }
     lines = ["📚 *Moodle update*", ""]
-    for key in ("missed", "two_days", "seven_days"):
+    for key in ("two_days", "seven_days"):
         lines.append(headings[key])
         items = sorted(groups[key], key=lambda item: item[0])
         if not items:
@@ -132,6 +141,18 @@ def build_deadline_digest(
             f"  {starts_at.strftime('%a, %d %b %Y %I:%M %p %Z')}\n"
             f"  {_value(row, 'url')}"
         )
+    for key, reverse in (("recent_missed", False), ("older_missed", True)):
+        lines.extend(["", headings[key]])
+        items = sorted(groups[key], key=lambda item: item[0], reverse=reverse)
+        if not items:
+            lines.append("• None")
+        for due, row in items:
+            status = _value(row, "submission_status") or "Not submitted"
+            lines.append(
+                f"• *{_value(row, 'course')}* — {_value(row, 'title')}\n"
+                f"  {due.strftime('%a, %d %b %Y %I:%M %p %Z')} · {status}\n"
+                f"  {_value(row, 'url')}"
+            )
     return "\n".join(lines).strip(), sorted(included_ids)
 
 

@@ -115,7 +115,7 @@ class-notes/
 
 ## Notifications
 
-Google Chat notifications are optional. Enable them under `notifications.google_chat` in `config.yml`, then set `GOOGLE_CHAT_WEBHOOK_URL` in `.env`. The digest includes actionable deadlines and live lectures within the configured window. Course exclusions and deduplication remain non-secret YAML settings.
+Google Chat notifications are optional. Enable them under `notifications.google_chat` in `config.yml`, then set `GOOGLE_CHAT_WEBHOOK_URL` in `.env`. The digest includes actionable deadlines and live lectures within the configured window. Both missed-work sections appear at the bottom, with recent misses before older misses; the boundary is configured with `deadlines.recent_missed_days`. Course exclusions and deduplication remain non-secret YAML settings.
 
 When notifications are disabled, collection and export continue normally without requiring a webhook.
 

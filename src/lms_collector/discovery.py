@@ -29,6 +29,7 @@ def observe_course_links(page: Page, settings: Settings) -> list[LinkObservation
         "/mod/resource/view.php": "resource",
         "/mod/folder/view.php": "folder",
         "/mod/assign/view.php": "assignment",
+        "/mod/quiz/view.php": "quiz",
         "/mod/page/view.php": "page",
     }
     for anchor in page.locator("a[href]").all():
@@ -124,6 +125,7 @@ def crawl_courses(page: Page, courses: list[LinkObservation]) -> tuple[list[dict
         "/mod/resource/view.php": "resource",
         "/mod/folder/view.php": "folder",
         "/mod/assign/view.php": "assignment",
+        "/mod/quiz/view.php": "quiz",
         "/mod/page/view.php": "page",
         "/mod/url/view.php": "external_url",
     }

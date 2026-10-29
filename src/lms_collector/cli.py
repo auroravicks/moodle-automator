@@ -154,12 +154,13 @@ def sync() -> None:
     LOGGER.info("Starting full LMS synchronization")
     result = run_sync(config)
     LOGGER.info(
-        "Synchronization complete: transcripts=%s notes=%s assignments=%s live_lectures=%s errors=%s",
-        result["transcripts"], result["notes"], result["assignments"], result["live_lectures"], len(result["errors"]),
+        "Synchronization complete: transcripts=%s notes=%s assignments=%s quizzes=%s live_lectures=%s errors=%s",
+        result["transcripts"], result["notes"], result["assignments"], result["quizzes"], result["live_lectures"], len(result["errors"]),
     )
     click.echo(
         f"Collected {result['transcripts']} transcript records, {result['notes']} note records, "
-        f"{result['assignments']} assignments, and {result['live_lectures']} upcoming live lectures; "
+        f"{result['assignments']} assignments, {result['quizzes']} quizzes, and "
+        f"{result['live_lectures']} upcoming live lectures; "
         f"errors={len(result['errors'])}."
     )
 
@@ -172,8 +173,14 @@ def deadlines() -> None:
         raise click.ClickException("No authentication state. Run: moodle-lms-automation login")
     LOGGER.info("Starting assignment status refresh")
     result = run_sync(config, include_materials=False, include_assignments=True)
-    LOGGER.info("Assignment refresh complete: assignments=%s errors=%s", result["assignments"], len(result["errors"]))
-    click.echo(f"Collected {result['assignments']} assignments; errors={len(result['errors'])}.")
+    LOGGER.info(
+        "Deadline refresh complete: assignments=%s quizzes=%s errors=%s",
+        result["assignments"], result["quizzes"], len(result["errors"]),
+    )
+    click.echo(
+        f"Collected {result['assignments']} assignments and {result['quizzes']} quizzes; "
+        f"errors={len(result['errors'])}."
+    )
 
 
 @cli.command(name="export-resources")

@@ -20,6 +20,7 @@ ACTIVITY_PATTERNS = {
     "/mod/resource/view.php": "resource",
     "/mod/folder/view.php": "folder",
     "/mod/assign/view.php": "assignment",
+    "/mod/quiz/view.php": "quiz",
     "/mod/page/view.php": "page",
     "/mod/url/view.php": "external_url",
 }
@@ -325,6 +326,62 @@ def collect_assignment(page: Page, course: Course, activity: Activity, settings:
     }
 
 
+def _quiz_status(page_text: str) -> str | None:
+    normalized = _clean(page_text).casefold()
+    if "submitted ·" in normalized or re.search(r"\bstatus\s+finished\b", normalized):
+        return "Submitted"
+    if "not yet attempted" in normalized:
+        return "Not yet attempted"
+    if "in progress" in normalized or "continue the last attempt" in normalized:
+        return "In progress"
+    return None
+
+
+def collect_quiz(
+    page: Page, course: Course, activity: Activity, settings: Settings, connection: Any
+) -> dict[str, Any]:
+    page.goto(activity.url, wait_until="domcontentloaded", timeout=45_000)
+    dates = page.locator("[data-region='activity-dates']")
+    dates_text = _clean(dates.first.inner_text()) if dates.count() else ""
+    values: dict[str, str | None] = {"opens_at": None, "due_at": None, "cutoff_at": None}
+    labels = {"Opened": "opens_at", "Closes": "due_at", "Closed": "due_at"}
+    for label, key in labels.items():
+        match = re.search(rf"{label}:\s*(.*?)(?=\s+(?:Opened|Closes|Closed):|$)", dates_text)
+        if match:
+            values[key] = _parse_moodle_date(match.group(1), settings)
+    main = page.locator("#region-main")
+    status = _quiz_status(main.first.inner_text() if main.count() else "")
+    title = _course_title(page, activity.title)
+    checked = utc_now()
+    old = connection.execute(
+        "SELECT due_at, first_seen FROM assignments WHERE activity_id=?", (activity.activity_id,)
+    ).fetchone()
+    first_seen = old["first_seen"] if old else checked
+    if old and old["due_at"] != values["due_at"]:
+        connection.execute(
+            "INSERT INTO deadline_history(activity_id,old_due_at,new_due_at,changed_at) VALUES(?,?,?,?)",
+            (activity.activity_id, old["due_at"], values["due_at"], checked),
+        )
+    connection.execute(
+        "INSERT INTO assignments(activity_id,course,title,url,opens_at,due_at,cutoff_at,submission_status,first_seen,last_checked) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(activity_id) DO UPDATE SET course=excluded.course,title=excluded.title,url=excluded.url,"
+        "opens_at=excluded.opens_at,due_at=excluded.due_at,cutoff_at=excluded.cutoff_at,submission_status=excluded.submission_status,last_checked=excluded.last_checked",
+        (activity.activity_id, course.name, title, activity.url, values["opens_at"], values["due_at"], values["cutoff_at"], status, first_seen, checked),
+    )
+    return {
+        "activity_id": activity.activity_id,
+        "activity_type": "quiz",
+        "course_id": course.course_id,
+        "subject": course.name,
+        "title": title,
+        "url": activity.url,
+        **values,
+        "submission_status": status,
+        "first_seen": first_seen,
+        "last_checked": checked,
+    }
+
+
 def _calendar_date(label: str, now: datetime) -> datetime:
     normalized = _clean(label).casefold()
     if normalized == "today":
@@ -381,6 +438,7 @@ def run_sync(settings: Settings, *, include_materials: bool = True, include_assi
     transcripts: list[dict[str, Any]] = []
     notes: list[dict[str, Any]] = []
     assignments: list[dict[str, Any]] = []
+    quizzes: list[dict[str, Any]] = []
     live_lectures: list[dict[str, str]] = []
     errors: list[dict[str, str]] = []
     with connect(settings.output_dir / "state.sqlite") as connection, sync_playwright() as playwright:
@@ -397,6 +455,8 @@ def run_sync(settings: Settings, *, include_materials: bool = True, include_assi
                         notes.extend(collect_resource(page, context, course, activity, connection))
                     elif include_assignments and activity.kind == "assignment":
                         assignments.append(collect_assignment(page, course, activity, settings, connection))
+                    elif include_assignments and activity.kind == "quiz":
+                        quizzes.append(collect_quiz(page, course, activity, settings, connection))
                     elif include_materials and activity.kind == "external_url":
                         notes.append({"activity_id": activity.activity_id, "title": activity.title, "status": "external", "url": activity.url})
                 except Exception as exc:
@@ -407,13 +467,14 @@ def run_sync(settings: Settings, *, include_materials: bool = True, include_assi
     reports = settings.output_dir / "reports"
     write_jsonl(reports / "transcripts.jsonl", transcripts)
     write_jsonl(reports / "notes.jsonl", notes)
-    atomic_json(reports / "deadlines.json", assignments)
+    atomic_json(reports / "deadlines.json", assignments + quizzes)
     summary = {
         "schema_version": 1,
         "completed_at": utc_now(),
         "transcripts": len(transcripts),
         "notes": len(notes),
         "assignments": len(assignments),
+        "quizzes": len(quizzes),
         "live_lectures": len(live_lectures),
         "errors": errors,
     }

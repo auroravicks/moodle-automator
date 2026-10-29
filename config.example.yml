@@ -27,6 +27,7 @@ deadlines:
   digest_windows_days:
     urgent: 2
     upcoming: 7
+  recent_missed_days: 7
   include_other_activity_types: false
 
 notifications:

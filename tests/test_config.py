@@ -12,7 +12,8 @@ def test_loads_yaml_behavior_and_env_secrets(tmp_path: Path, monkeypatch) -> Non
         "lms:\n  base_url: https://moodle.example.edu\n"
         "storage:\n  internal_dir: data\n  resources_dir: ../Resources\n"
         "browser:\n  headless: true\n"
-        "deadlines:\n  reminder_hours: [24, 3, 72]\n  digest_windows_days: {urgent: 2, upcoming: 7}\n",
+        "deadlines:\n  reminder_hours: [24, 3, 72]\n  digest_windows_days: {urgent: 2, upcoming: 7}\n"
+        "  recent_missed_days: 7\n",
         encoding="utf-8",
     )
     config = Settings.load(env, yaml)
@@ -23,3 +24,4 @@ def test_loads_yaml_behavior_and_env_secrets(tmp_path: Path, monkeypatch) -> Non
     assert config.username == "student"
     assert config.google_chat_webhook_url == "https://secret.example"
     assert config.google_chat_enabled is False
+    assert config.recent_missed_days == 7
