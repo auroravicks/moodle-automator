@@ -41,9 +41,9 @@ def send_auth_required(settings: Settings) -> dict[str, Any]:
         raise ValueError("GOOGLE_CHAT_WEBHOOK_URL is not configured in .env")
     text = (
         "🔐 *Moodle login required*\n\n"
-        "The unattended LMS run stopped before collecting or indexing anything because the saved session is "
+        "The unattended LMS run stopped before collecting anything because the saved session is "
         "missing or expired.\n\n"
-        "Open the Automation project and run `moodle-lms-automation login`, then rerun the base orchestrator."
+        "Open the project, run `moodle-lms-automation login`, then rerun the collector."
     )
     LOGGER.warning("Moodle authentication is missing or expired; sending login-required alert")
     message_name = _send_google_chat(settings.google_chat_webhook_url, text)

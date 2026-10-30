@@ -62,7 +62,7 @@ Both runners expose the same modes; only the host shell's argument spelling diff
 
 ## Authentication and unattended runs
 
-`login` always opens a visible, isolated persistent browser profile. Unattended workflows are headless and never wait at a password prompt. If the Moodle session is missing or expired, the default runner logs the failure, optionally sends a Google Chat login-required alert, exits nonzero, and leaves downstream jobs untouched. For a manual run, opt into an interactive recovery with `--login-if-needed` or `-LoginIfNeeded`; after login, the runner verifies the new session before continuing.
+`login` always opens a visible, isolated persistent browser profile. Unattended workflows are headless and never wait at a password prompt. If the Moodle session is missing or expired, the default runner logs the failure, optionally sends a Google Chat login-required alert, exits nonzero, and skips the remaining collection steps. For a manual run, opt into an interactive recovery with `--login-if-needed` or `-LoginIfNeeded`; after login, the runner verifies the new session before continuing.
 
 The example configuration uses Playwright's bundled Chromium (`browser.channel: null`) for portability. Set a branded channel such as `chrome` or `msedge` only when it is installed on the host. Do not open the configured profile in another browser process while collection is running.
 
@@ -118,19 +118,6 @@ class-notes/
 Google Chat notifications are optional. Enable them under `notifications.google_chat` in `config.yml`, then set `GOOGLE_CHAT_WEBHOOK_URL` in `.env`. The digest includes actionable deadlines and live lectures within the configured window. Both missed-work sections appear at the bottom, with recent misses before older misses; the boundary is configured with `deadlines.recent_missed_days`. Course exclusions and deduplication remain non-secret YAML settings.
 
 When notifications are disabled, collection and export continue normally without requiring a webhook.
-
-## Orchestration
-
-The runners are ordinary finite processes; no resident shell is required. To chain a separate indexer, keep orchestration outside both repositories:
-
-```bash
-#!/usr/bin/env sh
-set -eu
-/bin/sh /absolute/path/to/moodle-lms-automation/run.sh
-/bin/sh /absolute/path/to/grep-knowledge/run.sh
-```
-
-The second command runs only after the collector succeeds.
 
 ## Operational notes
 
