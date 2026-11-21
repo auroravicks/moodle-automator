@@ -154,13 +154,14 @@ def sync() -> None:
     LOGGER.info("Starting full LMS synchronization")
     result = run_sync(config)
     LOGGER.info(
-        "Synchronization complete: transcripts=%s notes=%s assignments=%s quizzes=%s live_lectures=%s errors=%s",
-        result["transcripts"], result["notes"], result["assignments"], result["quizzes"], result["live_lectures"], len(result["errors"]),
+        "Synchronization complete: transcripts=%s notes=%s assignments=%s quizzes=%s live_lectures=%s grade_courses=%s errors=%s",
+        result["transcripts"], result["notes"], result["assignments"], result["quizzes"], result["live_lectures"], result["grade_courses"], len(result["errors"]),
     )
     click.echo(
         f"Collected {result['transcripts']} transcript records, {result['notes']} note records, "
         f"{result['assignments']} assignments, {result['quizzes']} quizzes, and "
         f"{result['live_lectures']} upcoming live lectures; "
+        f"grades for {result['grade_courses']} subscribed courses; "
         f"errors={len(result['errors'])}."
     )
 
@@ -172,13 +173,28 @@ def deadlines() -> None:
     if not config.auth_state_path.exists():
         raise click.ClickException("No authentication state. Run: moodle-lms-automation login")
     LOGGER.info("Starting assignment status refresh")
-    result = run_sync(config, include_materials=False, include_assignments=True)
+    result = run_sync(config, include_materials=False, include_assignments=True, include_grades=False)
     LOGGER.info(
         "Deadline refresh complete: assignments=%s quizzes=%s errors=%s",
         result["assignments"], result["quizzes"], len(result["errors"]),
     )
     click.echo(
         f"Collected {result['assignments']} assignments and {result['quizzes']} quizzes; "
+        f"errors={len(result['errors'])}."
+    )
+
+
+@cli.command()
+def grades() -> None:
+    """Refresh grades for courses present in the subscribed-courses inventory."""
+    config = settings()
+    if not config.auth_state_path.exists():
+        raise click.ClickException("No authentication state. Run: moodle-lms-automation login")
+    LOGGER.info("Starting subscribed-course grade refresh")
+    result = run_sync(config, include_materials=False, include_assignments=False, include_grades=True)
+    LOGGER.info("Grade refresh complete: courses=%s errors=%s", result["grade_courses"], len(result["errors"]))
+    click.echo(
+        f"Collected grades for {result['grade_courses']} subscribed courses; "
         f"errors={len(result['errors'])}."
     )
 

@@ -485,13 +485,160 @@ def collect_live_lectures(page: Page, settings: Settings, connection: Any) -> li
     return lectures
 
 
-def run_sync(settings: Settings, *, include_materials: bool = True, include_assignments: bool = True) -> dict[str, Any]:
+def _nullable_grade(value: Any) -> str | None:
+    cleaned = _clean(str(value or ""))
+    return None if not cleaned or cleaned in {"-", "–", "—"} else cleaned
+
+
+def _number(value: Any) -> float | None:
+    cleaned = _nullable_grade(value)
+    if cleaned is None:
+        return None
+    match = re.search(r"-?\d+(?:[.,]\d+)?", cleaned.replace(",", ""))
+    return float(match.group()) if match else None
+
+
+def _grade_display(value: Any) -> str | None:
+    cleaned = _clean(str(value or ""))
+    cleaned = re.sub(r"\s*Actions?\s+Grade analysis\b.*$", "", cleaned, flags=re.I).strip()
+    return _nullable_grade(cleaned)
+
+
+def _grade_numbers(grade: Any, grade_range: Any) -> tuple[float | None, float | None, float | None]:
+    grade_value = _number(grade)
+    range_text = _nullable_grade(grade_range)
+    if range_text is None:
+        return grade_value, None, None
+    values = [float(value.replace(",", "")) for value in re.findall(r"-?\d+(?:[.,]\d+)?", range_text)]
+    return grade_value, values[0] if values else None, values[1] if len(values) > 1 else None
+
+
+def collect_grades(page: Page, course: Course, settings: Settings, connection: Any) -> dict[str, Any]:
+    """Collect the signed-in user's grade report for one subscribed course."""
+    report_url = f"{settings.base_url}/grade/report/user/index.php?id={course.course_id}"
+    page.goto(report_url, wait_until="domcontentloaded", timeout=45_000)
+    if "/login/" in page.url:
+        raise RuntimeError("Authentication expired while collecting grades")
+    checked = utc_now()
+    status_by_url = {
+        item["url"]: item["status"]
+        for item in page.locator("table.sgr-table tr").evaluate_all(
+            """rows => rows.map(row => ({
+                url: row.querySelector('.sgr-link')?.href || '',
+                status: row.querySelector('.sgr-status')?.innerText?.trim() || ''
+            })).filter(item => item.url)"""
+        )
+    }
+    raw_rows = page.locator("table.user-grade tbody tr").evaluate_all(
+        """rows => rows.map(row => {
+            const link = row.querySelector('a.gradeitemheader, .column-itemname a[href*="/mod/"]');
+            const text = selector => (row.querySelector(selector)?.innerText || '').trim();
+            const itemCell = row.querySelector('.column-itemname');
+            return {
+                row_id: row.id || '',
+                title: (link?.innerText || itemCell?.innerText || '').trim(),
+                url: link?.href || '',
+                weight: text('.column-weight'),
+                grade: text('.column-grade'),
+                range: text('.column-range'),
+                percentage: text('.column-percentage'),
+                feedback: text('.column-feedback'),
+                contribution: text('.column-contributiontocoursetotal'),
+                is_total: /course total/i.test(itemCell?.innerText || '')
+            };
+        }).filter(row => row.title)"""
+    )
+    items: list[dict[str, Any]] = []
+    course_total: dict[str, Any] | None = None
+    for raw in raw_rows:
+        if raw["is_total"]:
+            course_total = {
+                "grade_display": _nullable_grade(raw["grade"]),
+                "grade_value": _number(raw["grade"]),
+                "percentage_display": _nullable_grade(raw["percentage"]),
+                "percentage_value": _number(raw["percentage"]),
+            }
+            continue
+        url = str(raw["url"] or "")
+        if not url:
+            continue
+        activity_id = _id(url)
+        row_id = str(raw["row_id"] or "")
+        grade_item_id = row_id.removeprefix("row_").split("_")[0] or activity_id
+        activity_type = next(
+            (kind for fragment, kind in ACTIVITY_PATTERNS.items() if fragment in url), None
+        )
+        grade_display = _grade_display(raw["grade"])
+        range_display = _nullable_grade(raw["range"])
+        grade_value, grade_min, grade_max = _grade_numbers(grade_display, range_display)
+        item = {
+            "course_id": course.course_id,
+            "grade_item_id": grade_item_id,
+            "activity_id": activity_id,
+            "subject": course.name,
+            "title": _clean(raw["title"]),
+            "activity_type": activity_type,
+            "url": url,
+            "grade_display": grade_display,
+            "grade_value": grade_value,
+            "grade_min": grade_min,
+            "grade_max": grade_max,
+            "range_display": range_display,
+            "percentage_display": _nullable_grade(raw["percentage"]),
+            "percentage_value": _number(raw["percentage"]),
+            "calculated_weight_display": _nullable_grade(raw["weight"]),
+            "calculated_weight_percent": _number(raw["weight"]),
+            "contribution_display": _nullable_grade(raw["contribution"]),
+            "contribution_percent": _number(raw["contribution"]),
+            "status": _nullable_grade(status_by_url.get(url)),
+            "feedback": _nullable_grade(raw["feedback"]),
+            "last_checked": checked,
+        }
+        old = connection.execute(
+            "SELECT grade,status,first_seen FROM grade_items WHERE course_id=? AND grade_item_id=?",
+            (course.course_id, grade_item_id),
+        ).fetchone()
+        first_seen = old["first_seen"] if old else checked
+        if old and (old["grade"] != item["grade_display"] or old["status"] != item["status"]):
+            connection.execute(
+                "INSERT INTO grade_history(course_id,grade_item_id,old_grade,new_grade,old_status,new_status,changed_at) VALUES(?,?,?,?,?,?,?)",
+                (course.course_id, grade_item_id, old["grade"], item["grade_display"], old["status"], item["status"], checked),
+            )
+        connection.execute(
+            "INSERT INTO grade_items(course_id,grade_item_id,activity_id,course,title,activity_type,url,grade,grade_value,grade_min,grade_max,grade_range,percentage,percentage_value,calculated_weight,calculated_weight_percent,contribution,contribution_percent,status,feedback,first_seen,last_checked) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(course_id,grade_item_id) DO UPDATE SET activity_id=excluded.activity_id,course=excluded.course,title=excluded.title,activity_type=excluded.activity_type,url=excluded.url,grade=excluded.grade,grade_value=excluded.grade_value,grade_min=excluded.grade_min,grade_max=excluded.grade_max,grade_range=excluded.grade_range,percentage=excluded.percentage,percentage_value=excluded.percentage_value,calculated_weight=excluded.calculated_weight,calculated_weight_percent=excluded.calculated_weight_percent,contribution=excluded.contribution,contribution_percent=excluded.contribution_percent,status=excluded.status,feedback=excluded.feedback,last_checked=excluded.last_checked",
+            (course.course_id, grade_item_id, activity_id, course.name, item["title"], activity_type, url, grade_display, grade_value, grade_min, grade_max, range_display, item["percentage_display"], item["percentage_value"], item["calculated_weight_display"], item["calculated_weight_percent"], item["contribution_display"], item["contribution_percent"], item["status"], item["feedback"], first_seen, checked),
+        )
+        items.append(item)
+    connection.execute(
+        "INSERT INTO course_grades(course_id,course,total_grade,total_grade_value,percentage,percentage_value,last_checked) VALUES(?,?,?,?,?,?,?) "
+        "ON CONFLICT(course_id) DO UPDATE SET course=excluded.course,total_grade=excluded.total_grade,total_grade_value=excluded.total_grade_value,percentage=excluded.percentage,percentage_value=excluded.percentage_value,last_checked=excluded.last_checked",
+        (course.course_id, course.name, (course_total or {}).get("grade_display"), (course_total or {}).get("grade_value"), (course_total or {}).get("percentage_display"), (course_total or {}).get("percentage_value"), checked),
+    )
+    return {
+        "course_id": course.course_id,
+        "subject": course.name,
+        "source_url": report_url,
+        "total": course_total,
+        "items": items,
+        "last_checked": checked,
+    }
+
+
+def run_sync(
+    settings: Settings,
+    *,
+    include_materials: bool = True,
+    include_assignments: bool = True,
+    include_grades: bool = True,
+) -> dict[str, Any]:
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     transcripts: list[dict[str, Any]] = []
     notes: list[dict[str, Any]] = []
     assignments: list[dict[str, Any]] = []
     quizzes: list[dict[str, Any]] = []
     live_lectures: list[dict[str, str]] = []
+    grades: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     with connect(settings.output_dir / "state.sqlite") as connection, sync_playwright() as playwright:
         browser, context = new_context(playwright, settings, visible=not settings.headless)
@@ -499,6 +646,12 @@ def run_sync(settings: Settings, *, include_materials: bool = True, include_assi
         courses, activities = inventory(page, settings)
         live_lectures = collect_live_lectures(page, settings, connection)
         for course in courses:
+            if include_grades:
+                try:
+                    grades.append(collect_grades(page, course, settings, connection))
+                except Exception as exc:
+                    errors.append({"course": course.name, "activity_id": "grades", "kind": "grades", "error": str(exc)[:500]})
+                connection.commit()
             for activity in activities[course.course_id]:
                 try:
                     if include_materials and activity.kind == "page":
@@ -520,6 +673,8 @@ def run_sync(settings: Settings, *, include_materials: bool = True, include_assi
     write_jsonl(reports / "transcripts.jsonl", transcripts)
     write_jsonl(reports / "notes.jsonl", notes)
     atomic_json(reports / "deadlines.json", assignments + quizzes)
+    if include_grades:
+        atomic_json(reports / "grades.json", {"schema_version": 2, "courses": grades})
     summary = {
         "schema_version": 1,
         "completed_at": utc_now(),
@@ -528,6 +683,7 @@ def run_sync(settings: Settings, *, include_materials: bool = True, include_assi
         "assignments": len(assignments),
         "quizzes": len(quizzes),
         "live_lectures": len(live_lectures),
+        "grade_courses": len(grades),
         "errors": errors,
     }
     atomic_json(reports / "last-run.json", summary)
