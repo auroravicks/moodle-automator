@@ -103,6 +103,12 @@ class-notes/
           metadata-1.json
           versions/
             <content-hash>--<original-filename>
+      assignments/
+        <assignment>--<activity-id>/
+          metadata.json
+          attachments/
+            versions/
+              <content-hash>--<original-filename>
   reports/
     transcripts.jsonl
     notes.jsonl
@@ -111,7 +117,7 @@ class-notes/
   logs/
 ```
 
-`transcripts.jsonl` is suitable for later batch summarization. Notes are content-addressed, so changed files create new versions rather than overwriting earlier material.
+`transcripts.jsonl` is suitable for later batch summarization. Notes and instructor-provided assignment attachments are content-addressed, so changed files create new versions rather than overwriting earlier material. Student submission files are intentionally excluded.
 
 ## Notifications
 

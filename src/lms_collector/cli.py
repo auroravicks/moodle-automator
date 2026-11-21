@@ -190,7 +190,8 @@ def export_resources() -> None:
     click.echo(
         f"Exported {result['courses']} courses, {result['transcripts']} transcripts, "
         f"{result['captions']} captions, "
-        f"{result['notes']} notes, and {result['assignments']} assignments to {result['destination']}."
+        f"{result['notes']} notes, {result['assignments']} assignments, and "
+        f"{result['assignment_materials']} assignment attachments to {result['destination']}."
     )
 
 

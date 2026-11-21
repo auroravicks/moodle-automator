@@ -271,7 +271,19 @@ def _parse_moodle_date(value: str, settings: Settings) -> str | None:
     return None
 
 
-def collect_assignment(page: Page, course: Course, activity: Activity, settings: Settings, connection: Any) -> dict[str, Any]:
+def _is_assignment_material_url(url: str) -> bool:
+    path = urlparse(url).path.casefold()
+    return "pluginfile.php" in path and "/mod_assign/intro" in path
+
+
+def collect_assignment(
+    page: Page,
+    context: BrowserContext,
+    course: Course,
+    activity: Activity,
+    settings: Settings,
+    connection: Any,
+) -> dict[str, Any]:
     page.goto(activity.url, wait_until="domcontentloaded", timeout=45_000)
     dates_text = _clean(page.locator("[data-region='activity-dates']").inner_text())
     values: dict[str, str | None] = {"opens_at": None, "due_at": None, "cutoff_at": None}
@@ -299,6 +311,40 @@ def collect_assignment(page: Page, course: Course, activity: Activity, settings:
                 if cells.count() >= 2 and _clean(cells.nth(0).inner_text()).casefold() == "submission status":
                     status = _clean(cells.nth(1).inner_text())
                     break
+    description = page.locator(".activity-description")
+    description_text = _clean(description.first.inner_text()) if description.count() else ""
+    description_links: list[dict[str, str]] = []
+    attachments: list[dict[str, str]] = []
+    assignment_dir = course.directory / "assignments" / f"{safe_name(activity.title)}--{activity.activity_id}"
+    if description.count():
+        observed_links = description.first.locator("a[href]").evaluate_all(
+            "els => els.map(e => ({url: e.href, text: (e.innerText || '').trim()}))"
+        )
+        for link in observed_links:
+            url = str(link.get("url") or "")
+            if not url:
+                continue
+            description_links.append({"text": _clean(str(link.get("text") or "")), "url": url})
+            if not _is_assignment_material_url(url):
+                continue
+            response = context.request.get(url, timeout=60_000)
+            if not response.ok:
+                raise RuntimeError(f"Assignment material request failed with HTTP {response.status}")
+            content = response.body()
+            digest = sha256(content)
+            filename = _filename(response, url, f"attachment-{len(attachments) + 1}")
+            version_path = assignment_dir / "attachments" / "versions" / f"{digest[:12]}--{filename}"
+            if not version_path.exists():
+                atomic_write(version_path, content)
+            attachments.append(
+                {
+                    "filename": filename,
+                    "source_url": url,
+                    "content_type": response.headers.get("content-type") or "",
+                    "content_sha256": digest,
+                    "current_path": str(version_path.relative_to(course.directory)),
+                }
+            )
     checked = utc_now()
     old = connection.execute("SELECT due_at, first_seen FROM assignments WHERE activity_id=?", (activity.activity_id,)).fetchone()
     first_seen = old["first_seen"] if old else checked
@@ -313,17 +359,23 @@ def collect_assignment(page: Page, course: Course, activity: Activity, settings:
         "opens_at=excluded.opens_at,due_at=excluded.due_at,cutoff_at=excluded.cutoff_at,submission_status=excluded.submission_status,last_checked=excluded.last_checked",
         (activity.activity_id, course.name, activity.title, activity.url, values["opens_at"], values["due_at"], values["cutoff_at"], status, first_seen, checked),
     )
-    return {
+    result = {
         "activity_id": activity.activity_id,
+        "activity_type": "assignment",
         "course_id": course.course_id,
         "subject": course.name,
         "title": activity.title,
         "url": activity.url,
         **values,
         "submission_status": status,
+        "description_text": description_text,
+        "description_links": description_links,
+        "attachments": attachments,
         "first_seen": first_seen,
         "last_checked": checked,
     }
+    atomic_json(assignment_dir / "metadata.json", result)
+    return result
 
 
 def _quiz_status(page_text: str) -> str | None:
@@ -454,7 +506,7 @@ def run_sync(settings: Settings, *, include_materials: bool = True, include_assi
                     elif include_materials and activity.kind in {"resource", "folder"}:
                         notes.extend(collect_resource(page, context, course, activity, connection))
                     elif include_assignments and activity.kind == "assignment":
-                        assignments.append(collect_assignment(page, course, activity, settings, connection))
+                        assignments.append(collect_assignment(page, context, course, activity, settings, connection))
                     elif include_assignments and activity.kind == "quiz":
                         quizzes.append(collect_quiz(page, course, activity, settings, connection))
                     elif include_materials and activity.kind == "external_url":

@@ -46,6 +46,7 @@ def export_readable(settings: Settings) -> dict[str, int | str]:
     root.mkdir(parents=True, exist_ok=True)
     transcript_count = caption_count = note_count = 0
     subjects: set[str] = set()
+    course_directories: dict[str, Path] = {}
 
     for course_dir in sorted((settings.output_dir / "courses").glob("*")):
         course_file = course_dir / "course.json"
@@ -54,6 +55,7 @@ def export_readable(settings: Settings) -> dict[str, int | str]:
         course = json.loads(course_file.read_text(encoding="utf-8"))
         subject = course["subject"]
         subjects.add(subject)
+        course_directories[subject] = course_dir
         destination = root / safe_name(subject)
 
         for metadata_file in course_dir.glob("transcripts/*/metadata.json"):
@@ -83,7 +85,7 @@ def export_readable(settings: Settings) -> dict[str, int | str]:
             seen.add(digest)
             note_count += 1
 
-    assignment_count = 0
+    assignment_count = assignment_material_count = 0
     deadlines = settings.output_dir / "reports" / "deadlines.json"
     if deadlines.exists():
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -104,12 +106,39 @@ def export_readable(settings: Settings) -> dict[str, int | str]:
                     f"- LMS: {item['url']}", "",
                 ]
                 assignment_count += 1
+                if item.get("activity_type") != "assignment":
+                    continue
+                assignment_dir = root / safe_name(subject) / "Assignments" / safe_name(item["title"])
+                brief_lines = [
+                    f"# {item['title']}", "",
+                    item.get("description_text") or "No written assignment description was provided.", "",
+                ]
+                links = item.get("description_links") or []
+                external_links = [
+                    link for link in links
+                    if link.get("url") and "pluginfile.php" not in link.get("url", "")
+                ]
+                if external_links:
+                    brief_lines += ["## Links", ""]
+                    brief_lines += [
+                        f"- {link.get('text') or link['url']}: {link['url']}" for link in external_links
+                    ]
+                    brief_lines.append("")
+                brief_lines += [f"LMS: {item['url']}", ""]
+                atomic_write(assignment_dir / "brief.txt", "\n".join(brief_lines).encode("utf-8"))
+                for attachment in item.get("attachments") or []:
+                    source = course_directories[subject] / attachment["current_path"]
+                    if source.exists() and source.suffix.lower() in RESOURCE_EXTENSIONS:
+                        _copy(source, assignment_dir / "Attachments", attachment.get("filename") or source.name)
+                        assignment_material_count += 1
             atomic_write(root / safe_name(subject) / "Assignments.md", "\n".join(lines).encode("utf-8"))
 
     atomic_write(root / "README.md", (
         "# Course Resources\n\n"
         "Clean LMS export. Each course contains timestamped .txt Transcripts, original .vtt Captions, "
-        "original Notes, and Assignments.md. Collector metadata and state remain in the internal store.\n"
+        "original Notes, assignment briefs and attachments, and Assignments.md. "
+        "Collector metadata and state remain in the internal store.\n"
     ).encode("utf-8"))
     return {"destination": str(root), "courses": len(subjects), "transcripts": transcript_count,
-            "captions": caption_count, "notes": note_count, "assignments": assignment_count}
+            "captions": caption_count, "notes": note_count, "assignments": assignment_count,
+            "assignment_materials": assignment_material_count}
