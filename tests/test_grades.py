@@ -1,4 +1,4 @@
-from lms_collector.collectors import _grade_display, _grade_numbers, _nullable_grade, _number
+from lms_collector.collectors import _grade_display, _grade_numbers, _minutes, _nullable_grade, _number
 from lms_collector.db import connect
 
 
@@ -10,6 +10,7 @@ def test_nullable_grade_preserves_display_values() -> None:
     assert _grade_numbers("8.50", "0–10") == (8.5, 0.0, 10.0)
     assert _grade_display("- Actions Grade analysis") is None
     assert _grade_display("8.50 Actions Grade analysis") == "8.50"
+    assert _minutes("82.17 / 89.58 min") == (82.17, 89.58)
 
 
 def test_grade_schema_records_current_state_and_history(tmp_path) -> None:

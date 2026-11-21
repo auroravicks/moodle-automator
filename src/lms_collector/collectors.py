@@ -625,12 +625,109 @@ def collect_grades(page: Page, course: Course, settings: Settings, connection: A
     }
 
 
+def _minutes(value: str) -> tuple[float | None, float | None]:
+    values = re.findall(r"\d+(?:\.\d+)?", value)
+    return (
+        float(values[0]) if values else None,
+        float(values[1]) if len(values) > 1 else None,
+    )
+
+
+def collect_attendance(page: Page, course: Course, settings: Settings, connection: Any) -> dict[str, Any] | None:
+    """Collect subject attendance summary and every paginated live-session row."""
+    page.goto(course.url, wait_until="domcontentloaded", timeout=45_000)
+    view_more = page.locator(".livesession-viewmore")
+    try:
+        view_more.wait_for(state="visible", timeout=30_000)
+    except Exception:
+        return None
+    checked = utc_now()
+    summary = {
+        "total_sessions": int(_number(page.locator(".lss-leg--total .lss-leg-n").inner_text()) or 0),
+        "attended_sessions": int(_number(page.locator(".lss-leg--attended .lss-leg-n").inner_text()) or 0),
+        "missed_sessions": int(_number(page.locator(".lss-leg--missed .lss-leg-n").inner_text()) or 0),
+        "attendance_percent": _number(page.locator(".lss-hero-pct").inner_text()),
+    }
+    view_more.click()
+    dialog = page.locator("[role='dialog']:visible")
+    dialog.wait_for(state="visible", timeout=15_000)
+    page_buttons = dialog.locator(".lsd-page")
+    page_count = page_buttons.count()
+    sessions: list[dict[str, Any]] = []
+    for page_number in range(1, max(page_count, 1) + 1):
+        if page_count:
+            button = dialog.locator(f".lsd-page[data-page='{page_number}']")
+            if button.get_attribute("aria-current") != "page":
+                button.click()
+                page.wait_for_function(
+                    "n => document.querySelector(`.lsd-page[data-page='${n}']`)?.getAttribute('aria-current') === 'page'",
+                    arg=page_number,
+                    timeout=15_000,
+                )
+        raw_rows = dialog.locator(".lsd-table tbody tr").evaluate_all(
+            """rows => rows.map(row => ({
+                title: row.querySelector('.lsd-name')?.innerText?.trim() || '',
+                date: row.querySelector('.lsd-date')?.innerText?.trim() || '',
+                minutes: row.querySelector('.lsd-num')?.innerText?.trim() || '',
+                percentage: row.querySelector('.lsd-pctval')?.innerText?.trim() || '',
+                status: row.querySelector('.lsd-pill')?.innerText?.trim() || ''
+            }))"""
+        )
+        for raw in raw_rows:
+            try:
+                starts_at = datetime.strptime(raw["date"], "%Y-%m-%d %H:%M").replace(
+                    tzinfo=settings.timezone
+                ).isoformat()
+            except ValueError:
+                starts_at = raw["date"]
+            attended_minutes, total_minutes = _minutes(raw["minutes"])
+            status = _nullable_grade(raw["status"])
+            method_match = re.search(r"\(([^)]+)\)", status or "")
+            session_id = sha256(f"{course.course_id}|{starts_at}|{raw['title']}".encode())[:24]
+            previous = connection.execute(
+                "SELECT first_seen FROM attendance_sessions WHERE session_id=?", (session_id,)
+            ).fetchone()
+            first_seen = previous["first_seen"] if previous else checked
+            item = {
+                "session_id": session_id,
+                "course_id": course.course_id,
+                "subject": course.name,
+                "title": _clean(raw["title"]),
+                "starts_at": starts_at,
+                "attended_minutes": attended_minutes,
+                "total_minutes": total_minutes,
+                "attendance_percent": _number(raw["percentage"]),
+                "status": status,
+                "attendance_method": method_match.group(1) if method_match else None,
+                "last_checked": checked,
+            }
+            connection.execute(
+                "INSERT INTO attendance_sessions(session_id,course_id,course,title,starts_at,attended_minutes,total_minutes,attendance_percent,status,attendance_method,first_seen,last_checked) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET course=excluded.course,title=excluded.title,starts_at=excluded.starts_at,attended_minutes=excluded.attended_minutes,total_minutes=excluded.total_minutes,attendance_percent=excluded.attendance_percent,status=excluded.status,attendance_method=excluded.attendance_method,last_checked=excluded.last_checked",
+                (session_id, course.course_id, course.name, item["title"], starts_at, attended_minutes, total_minutes, item["attendance_percent"], status, item["attendance_method"], first_seen, checked),
+            )
+            sessions.append(item)
+    connection.execute(
+        "INSERT INTO attendance_summaries(course_id,course,total_sessions,attended_sessions,missed_sessions,attendance_percent,last_checked) VALUES(?,?,?,?,?,?,?) "
+        "ON CONFLICT(course_id) DO UPDATE SET course=excluded.course,total_sessions=excluded.total_sessions,attended_sessions=excluded.attended_sessions,missed_sessions=excluded.missed_sessions,attendance_percent=excluded.attendance_percent,last_checked=excluded.last_checked",
+        (course.course_id, course.name, summary["total_sessions"], summary["attended_sessions"], summary["missed_sessions"], summary["attendance_percent"], checked),
+    )
+    return {
+        "course_id": course.course_id,
+        "subject": course.name,
+        **summary,
+        "sessions": sessions,
+        "last_checked": checked,
+    }
+
+
 def run_sync(
     settings: Settings,
     *,
     include_materials: bool = True,
     include_assignments: bool = True,
     include_grades: bool = True,
+    include_attendance: bool = True,
 ) -> dict[str, Any]:
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     transcripts: list[dict[str, Any]] = []
@@ -639,6 +736,7 @@ def run_sync(
     quizzes: list[dict[str, Any]] = []
     live_lectures: list[dict[str, str]] = []
     grades: list[dict[str, Any]] = []
+    attendance: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     with connect(settings.output_dir / "state.sqlite") as connection, sync_playwright() as playwright:
         browser, context = new_context(playwright, settings, visible=not settings.headless)
@@ -651,6 +749,14 @@ def run_sync(
                     grades.append(collect_grades(page, course, settings, connection))
                 except Exception as exc:
                     errors.append({"course": course.name, "activity_id": "grades", "kind": "grades", "error": str(exc)[:500]})
+                connection.commit()
+            if include_attendance:
+                try:
+                    subject_attendance = collect_attendance(page, course, settings, connection)
+                    if subject_attendance is not None:
+                        attendance.append(subject_attendance)
+                except Exception as exc:
+                    errors.append({"course": course.name, "activity_id": "attendance", "kind": "attendance", "error": str(exc)[:500]})
                 connection.commit()
             for activity in activities[course.course_id]:
                 try:
@@ -670,11 +776,15 @@ def run_sync(
         save_auth(context, settings.auth_state_path)
         browser.close()
     reports = settings.output_dir / "reports"
-    write_jsonl(reports / "transcripts.jsonl", transcripts)
-    write_jsonl(reports / "notes.jsonl", notes)
-    atomic_json(reports / "deadlines.json", assignments + quizzes)
+    if include_materials:
+        write_jsonl(reports / "transcripts.jsonl", transcripts)
+        write_jsonl(reports / "notes.jsonl", notes)
+    if include_assignments:
+        atomic_json(reports / "deadlines.json", assignments + quizzes)
     if include_grades:
         atomic_json(reports / "grades.json", {"schema_version": 2, "courses": grades})
+    if include_attendance:
+        atomic_json(reports / "attendance.json", {"schema_version": 1, "subjects": attendance})
     summary = {
         "schema_version": 1,
         "completed_at": utc_now(),
@@ -684,6 +794,7 @@ def run_sync(
         "quizzes": len(quizzes),
         "live_lectures": len(live_lectures),
         "grade_courses": len(grades),
+        "attendance_subjects": len(attendance),
         "errors": errors,
     }
     atomic_json(reports / "last-run.json", summary)

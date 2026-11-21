@@ -98,6 +98,29 @@ CREATE TABLE IF NOT EXISTS course_grades (
   percentage_value REAL,
   last_checked TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS attendance_summaries (
+  course_id TEXT PRIMARY KEY,
+  course TEXT NOT NULL,
+  total_sessions INTEGER NOT NULL,
+  attended_sessions INTEGER NOT NULL,
+  missed_sessions INTEGER NOT NULL,
+  attendance_percent REAL,
+  last_checked TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS attendance_sessions (
+  session_id TEXT PRIMARY KEY,
+  course_id TEXT NOT NULL,
+  course TEXT NOT NULL,
+  title TEXT NOT NULL,
+  starts_at TEXT NOT NULL,
+  attended_minutes REAL,
+  total_minutes REAL,
+  attendance_percent REAL,
+  status TEXT,
+  attendance_method TEXT,
+  first_seen TEXT NOT NULL,
+  last_checked TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS alert_deliveries (
   dedupe_key TEXT PRIMARY KEY,
   channel TEXT NOT NULL,

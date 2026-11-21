@@ -37,6 +37,20 @@ def test_exports_assignment_brief_and_attachment(config: Settings) -> None:
         ]),
         encoding="utf-8",
     )
+    (reports / "attendance.json").write_text(
+        json.dumps({
+            "schema_version": 1,
+            "subjects": [{
+                "subject": "Course A", "total_sessions": 1, "attended_sessions": 1,
+                "missed_sessions": 0, "attendance_percent": 80.0,
+                "sessions": [{
+                    "starts_at": "2026-11-01T09:00:00+05:30", "status": "Attended (Live)",
+                    "attendance_percent": 80.0, "attended_minutes": 40.0, "total_minutes": 50.0,
+                }],
+            }],
+        }),
+        encoding="utf-8",
+    )
 
     result = export_readable(config)
 
@@ -44,3 +58,7 @@ def test_exports_assignment_brief_and_attachment(config: Settings) -> None:
     assert "Complete the lab." in (exported / "brief.txt").read_text(encoding="utf-8")
     assert (exported / "Attachments" / "lab.csv").read_text(encoding="utf-8") == "x,y\n1,2\n"
     assert result["assignment_materials"] == 1
+    attendance = (config.resources_dir / "Course A" / "Attendance.md").read_text(encoding="utf-8")
+    assert "Total sessions: 1" in attendance
+    assert "40 / 50 minutes" in attendance
+    assert result["attendance_sessions"] == 1

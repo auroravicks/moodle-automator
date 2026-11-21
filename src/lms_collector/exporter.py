@@ -133,12 +133,53 @@ def export_readable(settings: Settings) -> dict[str, int | str]:
                         assignment_material_count += 1
             atomic_write(root / safe_name(subject) / "Assignments.md", "\n".join(lines).encode("utf-8"))
 
+    attendance_subject_count = attendance_session_count = 0
+    attendance_report = settings.output_dir / "reports" / "attendance.json"
+    if attendance_report.exists():
+        attendance_data = json.loads(attendance_report.read_text(encoding="utf-8"))
+        attendance_by_subject = {
+            item["subject"]: item for item in attendance_data.get("subjects", [])
+        }
+        for subject in sorted(subjects):
+            record = attendance_by_subject.get(subject)
+            lines = [f"# Attendance — {subject}", ""]
+            if record is None:
+                lines += ["No attendance counter was available in the latest LMS sync.", ""]
+            else:
+                attendance_subject_count += 1
+                lines += [
+                    f"- Total sessions: {record['total_sessions']}",
+                    f"- Attended: {record['attended_sessions']}",
+                    f"- Missed: {record['missed_sessions']}",
+                    f"- Attendance: {record.get('attendance_percent') if record.get('attendance_percent') is not None else 'Not provided'}%",
+                    "",
+                    "## Sessions",
+                    "",
+                ]
+                for session in sorted(record.get("sessions", []), key=lambda row: row["starts_at"], reverse=True):
+                    minutes = "Not provided"
+                    if session.get("attended_minutes") is not None and session.get("total_minutes") is not None:
+                        minutes = f"{session['attended_minutes']:g} / {session['total_minutes']:g} minutes"
+                    percentage = session.get("attendance_percent")
+                    lines += [
+                        f"### {_time(session['starts_at'])}",
+                        "",
+                        f"- Status: {session.get('status') or 'Not provided'}",
+                        f"- Attendance: {percentage:g}%" if percentage is not None else "- Attendance: Not provided",
+                        f"- Attended / total: {minutes}",
+                        "",
+                    ]
+                    attendance_session_count += 1
+            atomic_write(root / safe_name(subject) / "Attendance.md", "\n".join(lines).encode("utf-8"))
+
     atomic_write(root / "README.md", (
         "# Course Resources\n\n"
         "Clean LMS export. Each course contains timestamped .txt Transcripts, original .vtt Captions, "
-        "original Notes, assignment briefs and attachments, and Assignments.md. "
+        "original Notes, assignment briefs and attachments, Assignments.md, and Attendance.md. "
         "Collector metadata and state remain in the internal store.\n"
     ).encode("utf-8"))
     return {"destination": str(root), "courses": len(subjects), "transcripts": transcript_count,
             "captions": caption_count, "notes": note_count, "assignments": assignment_count,
-            "assignment_materials": assignment_material_count}
+            "assignment_materials": assignment_material_count,
+            "attendance_subjects": attendance_subject_count,
+            "attendance_sessions": attendance_session_count}
